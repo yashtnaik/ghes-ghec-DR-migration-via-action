@@ -1,0 +1,112 @@
+name: GHES to GitHub Migration (GEI)
+
+on:
+  workflow_dispatch:
+    inputs:
+      csv_path:
+        description: Path to repos.csv in this repository
+        required: true
+        default: repos.csv
+      max_concurrent:
+        description: Max parallel migrations (GEI recommends <= 5)
+        required: true
+        default: '5'
+      use_github_storage:
+        description: Use GitHub-owned storage for GEI migrations (recommended when available)
+        required: true
+        default: 'true'
+      # target_api_url:
+      #   description: Optional target API URL (for GHE.com data residency, e.g. https://api.SUBDOMAIN.ghe.com)
+      #   required: false
+      #   default: ''
+      run_readiness:
+        description: Run pre-migration readiness checks (PRs, workflows, issues)
+        required: true
+        default: 'true'
+      run_migration:
+        description: Run migrations
+        required: true
+        default: 'true'
+      run_validation:
+        description: Run post-migration validation (branches + commit counts)
+        required: true
+        default: 'true'
+
+jobs:
+  migrate:
+    # NOTE: For on-prem GHES, you may need a self-hosted runner that can reach GHES over the network.
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    env:
+      # gh CLI uses GH_TOKEN for authentication. We wire it to GH_TOKEN secret.
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      # GEI extension reads these for source/target auth.
+      GH_PAT: ${{ secrets.GH_PAT }}
+      GH_SOURCE_PAT: ${{ secrets.GH_SOURCE_PAT }}
+      GHES_API_URL: ${{ secrets.GHES_API_URL }}
+      # Optional behavior for our migration runner
+      USE_GITHUB_STORAGE: ${{ inputs.use_github_storage }}
+      # TARGET_API_URL: ${{ inputs.target_api_url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y jq
+          if ! command -v gh >/dev/null 2>&1; then
+            sudo apt-get install -y gh
+          fi
+          gh --version
+          jq --version
+
+      - name: Install / update GitHub Enterprise Importer (GEI) extension
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh extension install github/gh-gei || gh extension upgrade github/gh-gei
+          gh gei --help >/dev/null
+
+      - name: Make scripts executable
+        shell: bash
+        run: chmod +x scripts/*.sh
+
+      - name: Pre-migration readiness checks
+        if: ${{ inputs.run_readiness == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/1_migration-readiness.sh
+
+      - name: Run migrations (parallel)
+        if: ${{ inputs.run_migration == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/2_migration.sh --max-concurrent "${{ inputs.max_concurrent }}" --csv "${{ inputs.csv_path }}" --output repo_migration_output.csv
+
+      - name: Post-migration validation
+        if: ${{ inputs.run_validation == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/3_post_migration_validation.sh
+
+      - name: Upload migration artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ghes2gh-migration-artifacts-${{ github.run_id }}
+          path: |
+            repo_migration_output*.csv
+            migration-*.txt
+            validation-log-*.txt
+            validation-*.json
+          if-no-files-found: warn
