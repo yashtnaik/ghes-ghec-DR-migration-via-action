@@ -21,15 +21,15 @@ on:
         required: true
         default: "5"
 
-      use_github_storage:
-        description: Pass --use-github-storage to GEI (if enabled for your org)
-        required: true
-        default: "true"
+      # use_github_storage:
+      #   description: Pass --use-github-storage to GEI (if enabled for your org)
+      #   required: true
+      #   default: "true"
 
-      target_api_url:
-        description: Optional (GHE.com data residency): https://api.SUBDOMAIN.ghe.com
-        required: false
-        default: ""
+      # target_api_url:
+      #   description: Optional (GHE.com data residency): https://api.SUBDOMAIN.ghe.com
+      #   required: false
+      #   default: ""
 
       run_pre_validation:
         description: Run Stage 1 - pre-migration validation
@@ -197,27 +197,27 @@ jobs:
           TIMEOUT="${{ inputs.approval_timeout_minutes }}"
 
           BODY=$(cat <<EOF
-A migration run is ready to proceed to **Stage 2 (Migration)**.
-
-**Run:** ${RUN_URL}
-**Repository:** ${{ github.repository }}
-**Timeout:** ${TIMEOUT} minutes
-
-### How to approve
-Add a comment containing:
-
-\`/approve\`
-
-EOF
-          )
-
-          # Mention team if org/team provided
-          if [[ -n "${APPROVER}" && "${APPROVER}" == */* ]]; then
-            BODY="${BODY}
-
-🔔 Notifying team: @${APPROVER}
-"
-          fi
+          A migration run is ready to proceed to **Stage 2 (Migration)**.
+          
+          **Run:** ${RUN_URL}
+          **Repository:** ${{ github.repository }}
+          **Timeout:** ${TIMEOUT} minutes
+          
+          ### How to approve
+          Add a comment containing:
+          
+          \`/approve\`
+          
+          EOF
+                    )
+          
+                    # Mention team if org/team provided
+                    if [[ -n "${APPROVER}" && "${APPROVER}" == */* ]]; then
+                      BODY="${BODY}
+          
+          🔔 Notifying team: @${APPROVER}
+          "
+                    fi
 
           ASSIGNEE=()
           if [[ -n "${APPROVER}" && "${APPROVER}" != */* ]]; then
@@ -235,54 +235,54 @@ EOF
           echo "issue_number=$ISSUE_NUMBER" >> "$GITHUB_OUTPUT"
           echo "✅ Approval issue created: $ISSUE_URL"
 
-      - name: Wait for approval (/approve)
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          ISSUE="${{ steps.create_issue.outputs.issue_number }}"
-          APPROVER="${{ inputs.approver }}"
-          TIMEOUT_MIN="${{ inputs.approval_timeout_minutes }}"
-          END=$(( $(date +%s) + TIMEOUT_MIN*60 ))
-
-          echo "⏳ Waiting for /approve on issue #$ISSUE"
-
-          while true; do
-            if (( $(date +%s) > END )); then
-              echo "::error::Approval timeout after ${TIMEOUT_MIN} minutes"
-              exit 1
-            fi
-
-            # If approver is a username (not org/team), require that author.
-            if [[ -n "$APPROVER" && "$APPROVER" != */* ]]; then
-              APPROVED=$(gh api repos/${{ github.repository }}/issues/$ISSUE/comments --paginate \
-                --jq "[.[] | select(.user.login==\"$APPROVER\") | select(.body | test(\"(^|\\\\n)/approve(\\\\n|$)\";\"i\"))] | length")
-            else
-              APPROVED=$(gh api repos/${{ github.repository }}/issues/$ISSUE/comments --paginate \
-                --jq "[.[] | select(.body | test(\"(^|\\\\n)/approve(\\\\n|$)\";\"i\"))] | length")
-            fi
-
-            if [[ "$APPROVED" -gt 0 ]]; then
-              echo "✅ Approval received"
-              break
-            fi
-
-            sleep 30
-          done
-
-      - name: Publish approval gate summary
-        if: always()
-        shell: bash
-        run: |
-          {
-            echo "## 🛂 Approval Gate"
-            echo ""
-            echo "- **Issue:** ${{ steps.create_issue.outputs.issue_url }}"
-            echo "- **Approver input:** \`${{ inputs.approver }}\`"
-            echo "- **Timeout:** \`${{ inputs.approval_timeout_minutes }} minutes\`"
-            echo ""
-            echo "✅ Gate passed if this job succeeded."
-          } >> "$GITHUB_STEP_SUMMARY"
+          - name: Wait for approval (/approve)
+            shell: bash
+            run: |
+              set -euo pipefail
+    
+              ISSUE="${{ steps.create_issue.outputs.issue_number }}"
+              APPROVER="${{ inputs.approver }}"
+              TIMEOUT_MIN="${{ inputs.approval_timeout_minutes }}"
+              END=$(( $(date +%s) + TIMEOUT_MIN*60 ))
+    
+              echo "⏳ Waiting for /approve on issue #$ISSUE"
+    
+              while true; do
+                if (( $(date +%s) > END )); then
+                  echo "::error::Approval timeout after ${TIMEOUT_MIN} minutes"
+                  exit 1
+                fi
+    
+                # If approver is a username (not org/team), require that author.
+                if [[ -n "$APPROVER" && "$APPROVER" != */* ]]; then
+                  APPROVED=$(gh api repos/${{ github.repository }}/issues/$ISSUE/comments --paginate \
+                    --jq "[.[] | select(.user.login==\"$APPROVER\") | select(.body | test(\"(^|\\\\n)/approve(\\\\n|$)\";\"i\"))] | length")
+                else
+                  APPROVED=$(gh api repos/${{ github.repository }}/issues/$ISSUE/comments --paginate \
+                    --jq "[.[] | select(.body | test(\"(^|\\\\n)/approve(\\\\n|$)\";\"i\"))] | length")
+                fi
+    
+                if [[ "$APPROVED" -gt 0 ]]; then
+                  echo "✅ Approval received"
+                  break
+                fi
+    
+                sleep 30
+              done
+    
+          - name: Publish approval gate summary
+            if: always()
+            shell: bash
+            run: |
+              {
+                echo "## 🛂 Approval Gate"
+                echo ""
+                echo "- **Issue:** ${{ steps.create_issue.outputs.issue_url }}"
+                echo "- **Approver input:** \`${{ inputs.approver }}\`"
+                echo "- **Timeout:** \`${{ inputs.approval_timeout_minutes }} minutes\`"
+                echo ""
+                echo "✅ Gate passed if this job succeeded."
+              } >> "$GITHUB_STEP_SUMMARY"
 
 
   migration:
