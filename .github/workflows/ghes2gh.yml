@@ -6,7 +6,8 @@ on:
       runner:
         description: >
           Runner selector. Use ubuntu-latest for GitHub-hosted.
-          For self-hosted, provide JSON labels
+          For self-hosted, provide JSON array of runner LABELS,
+          e.g. ["self-hosted","linux","x64","ghes-migration"].
         required: true
         default: "ubuntu-latest"
 
@@ -20,15 +21,15 @@ on:
         required: true
         default: "5"
 
-      # use_github_storage:
-      #   description: Pass --use-github-storage to GEI (if enabled for your org)
-      #   required: true
-      #   default: "true"
+      use_github_storage:
+        description: Pass --use-github-storage to GEI (if enabled for your org)
+        required: true
+        default: "true"
 
-      # target_api_url:
-      #   description: Optional (GHE.com data residency): https://api.SUBDOMAIN.ghe.com
-      #   required: false
-      #   default: ""
+      target_api_url:
+        description: Optional (GHE.com data residency): https://api.SUBDOMAIN.ghe.com
+        required: false
+        default: ""
 
       run_pre_validation:
         description: Run Stage 1 - pre-migration validation
@@ -53,14 +54,15 @@ on:
       approver:
         description: >
           Approver GitHub username OR team slug (org/team).
-          If username provided, issue will be assigned; if team, it will be mentioned in issue body.
+          If username: approval must come from that user (via /approve comment).
+          If team: issue will mention the team; any user comment /approve will be accepted.
         required: false
         default: ""
 
       approval_timeout_minutes:
         description: How long to wait for approval (minutes)
         required: true
-        default: "720"   # 12 hours
+        default: "720"
 
 env:
   # gh CLI auth in Actions
@@ -77,7 +79,7 @@ env:
 
 permissions:
   contents: read
-  issues: write    # needed to create/read approval issue
+  issues: write
   actions: read
 
 jobs:
@@ -91,7 +93,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # GitHub-hosted convenience. For self-hosted, ensure gh/jq are preinstalled.
       - name: Install prerequisites (GitHub-hosted only)
         if: ${{ inputs.runner == 'ubuntu-latest' }}
         shell: bash
@@ -106,7 +107,7 @@ jobs:
         shell: bash
         run: chmod +x scripts/*.sh
 
-      # Pre-validation script expects scripts/repos.csv (hardcoded) [2](https://oneuptime.com/blog/post/2026-01-25-github-actions-environment-protection-rules/view)
+      # readiness script expects scripts/repos.csv (hardcoded) [1](https://oneuptime.com/blog/post/2026-01-25-github-actions-environment-protection-rules/view)
       - name: Prepare repos.csv for scripts
         shell: bash
         run: |
@@ -118,7 +119,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "Checking GHES API reachability..."
           curl -fsSL -H "Authorization: token ${GH_SOURCE_PAT}" "${GHES_API_URL%/}/user" >/dev/null
           echo "✅ GHES API reachable"
 
@@ -137,16 +137,17 @@ jobs:
             echo ""
             echo "**CSV:** \`${{ inputs.csv_path }}\` (copied to \`scripts/repos.csv\`)"
             echo ""
-            echo "### Consolidated summary"
-            # These lines are printed by your script [2](https://oneuptime.com/blog/post/2026-01-25-github-actions-environment-protection-rules/view)
+            echo "### Consolidated summary (from script output)"
+            # Script prints these lines [1](https://oneuptime.com/blog/post/2026-01-25-github-actions-environment-protection-rules/view)
             grep -E "Total Repositories Processed:|Repositories with Active Pull Requests:|Repositories with Workflows \\(Running or Queued\\):|Repositories with Open Issues:" precheck.log \
               | sed 's/^/- /' || true
             echo ""
-            echo "### Next step"
-            echo "- If approval gate is enabled, workflow will create an approval issue and wait for **/approve**."
-            echo ""
-            echo "### Artifacts"
-            echo "- \`precheck.log\` and \`scripts/repos.csv\`"
+            echo "### Next"
+            if [[ "${{ inputs.require_approval }}" == "true" && "${{ inputs.run_migration }}" == "true" ]]; then
+              echo "- ⏸️ Approval gate enabled. Workflow will create an approval issue and wait for **/approve**."
+            else
+              echo "- ▶️ Approval gate disabled or migration stage not selected."
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload pre-validation artifacts
@@ -161,9 +162,12 @@ jobs:
 
 
   approval_gate:
-    name: Approval Gate - Create issue & wait for approval
+    name: Approval Gate - Create issue & wait for /approve
     needs: [pre_migration_validation]
-    if: ${{ always() && inputs.run_migration == 'true' && inputs.require_approval == 'true' && (needs.pre_migration_validation.result == 'success' || needs.pre_migration_validation.result == 'skipped') }}
+    if: ${{ always()
+            && inputs.run_migration == 'true'
+            && inputs.require_approval == 'true'
+            && (needs.pre_migration_validation.result == 'success' || needs.pre_migration_validation.result == 'skipped') }}
     runs-on: ${{ inputs.runner == 'ubuntu-latest' && 'ubuntu-latest' || fromJson(inputs.runner) }}
 
     outputs:
@@ -181,111 +185,88 @@ jobs:
           gh --version
           jq --version
 
-      - name: Create approval issue
+      - name: Create approval issue (no labels required)
         id: create_issue
         shell: bash
         run: |
           set -euo pipefail
 
           RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          TITLE="Approve GHES→GHEC migration run #${{ github.run_id }}"
+          TITLE="Approve GHES → GHEC migration (run #${{ github.run_id }})"
           APPROVER="${{ inputs.approver }}"
           TIMEOUT="${{ inputs.approval_timeout_minutes }}"
 
-          BODY_FILE="$(mktemp)"
-          {
-            echo "A migration run is ready to proceed to **Stage 2 (Migration)**."
-            echo ""
-            echo "**Run:** ${RUN_URL}"
-            echo "**Repo:** ${{ github.repository }}"
-            echo "**Run ID:** ${{ github.run_id }}"
-            echo ""
-            echo "### How to approve"
-            echo "Add a comment with:"
-            echo ""
-            echo "\`/approve\`"
-            echo ""
-            echo "Alternatively, add the label **approved** to this issue."
-            echo ""
-            echo "### Timeout"
-            echo "This gate will time out after **${TIMEOUT} minutes**."
-            echo ""
-            if [[ -n "${APPROVER}" ]]; then
-              echo "### Requested approver"
-              echo "${APPROVER}"
-            fi
-          } > "$BODY_FILE"
+          BODY=$(cat <<EOF
+A migration run is ready to proceed to **Stage 2 (Migration)**.
 
-          # If approver looks like org/team -> mention in body, cannot assign.
-          ASSIGNEE_FLAG=()
-          if [[ -n "${APPROVER}" ]]; then
-            if [[ "${APPROVER}" == */* ]]; then
-              echo "" >> "$BODY_FILE"
-              echo "🔔 Notifying team: @${APPROVER}" >> "$BODY_FILE"
-            else
-              ASSIGNEE_FLAG=(--assignee "${APPROVER}")
-            fi
+**Run:** ${RUN_URL}
+**Repository:** ${{ github.repository }}
+**Timeout:** ${TIMEOUT} minutes
+
+### How to approve
+Add a comment containing:
+
+\`/approve\`
+
+EOF
+          )
+
+          # Mention team if org/team provided
+          if [[ -n "${APPROVER}" && "${APPROVER}" == */* ]]; then
+            BODY="${BODY}
+
+🔔 Notifying team: @${APPROVER}
+"
           fi
 
-          # Create issue
+          ASSIGNEE=()
+          if [[ -n "${APPROVER}" && "${APPROVER}" != */* ]]; then
+            ASSIGNEE=(--assignee "${APPROVER}")
+          fi
+
           ISSUE_URL=$(gh issue create \
             --repo "${{ github.repository }}" \
             --title "${TITLE}" \
-            --body-file "$BODY_FILE" \
-            --label "migration-approval" \
-            "${ASSIGNEE_FLAG[@]}")
+            --body "${BODY}" \
+            "${ASSIGNEE[@]}")
 
-          # Extract issue number
-          ISSUE_NUMBER=$(echo "$ISSUE_URL" | awk -F'/' '{print $NF}')
-
+          ISSUE_NUMBER=$(basename "$ISSUE_URL")
           echo "issue_url=$ISSUE_URL" >> "$GITHUB_OUTPUT"
           echo "issue_number=$ISSUE_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "✅ Approval issue created: $ISSUE_URL"
 
-          echo "Created approval issue: $ISSUE_URL"
-
-      - name: Wait for approval (/approve or label approved)
+      - name: Wait for approval (/approve)
         shell: bash
         run: |
           set -euo pipefail
 
-          ISSUE_NUMBER="${{ steps.create_issue.outputs.issue_number }}"
+          ISSUE="${{ steps.create_issue.outputs.issue_number }}"
           APPROVER="${{ inputs.approver }}"
           TIMEOUT_MIN="${{ inputs.approval_timeout_minutes }}"
-          END_TIME=$(( $(date +%s) + (TIMEOUT_MIN*60) ))
+          END=$(( $(date +%s) + TIMEOUT_MIN*60 ))
 
-          echo "Waiting for approval on issue #${ISSUE_NUMBER} (timeout: ${TIMEOUT_MIN} minutes)..."
-          echo "Approver input: '${APPROVER}'"
+          echo "⏳ Waiting for /approve on issue #$ISSUE"
 
           while true; do
-            now=$(date +%s)
-            if (( now > END_TIME )); then
-              echo "::error::Approval timeout reached (${TIMEOUT_MIN} minutes)."
+            if (( $(date +%s) > END )); then
+              echo "::error::Approval timeout after ${TIMEOUT_MIN} minutes"
               exit 1
             fi
 
-            # Check labels first
-            labels=$(gh api "repos/${{ github.repository }}/issues/${ISSUE_NUMBER}" --jq '.labels[].name' 2>/dev/null || true)
-            if echo "$labels" | grep -qi "^approved$"; then
-              echo "✅ Approved via label 'approved'."
-              break
-            fi
-
-            # Check comments for /approve
-            # If APPROVER provided and is a username (not org/team), require that author.
-            if [[ -n "${APPROVER}" && "${APPROVER}" != */* ]]; then
-              approved=$(gh api "repos/${{ github.repository }}/issues/${ISSUE_NUMBER}/comments" --paginate \
-                --jq "[.[] | select(.user.login==\"${APPROVER}\") | select((.body // \"\") | test(\"(^|\\\\n)/approve(\\\\n|$)\";\"i\"))] | length" 2>/dev/null || echo 0)
+            # If approver is a username (not org/team), require that author.
+            if [[ -n "$APPROVER" && "$APPROVER" != */* ]]; then
+              APPROVED=$(gh api repos/${{ github.repository }}/issues/$ISSUE/comments --paginate \
+                --jq "[.[] | select(.user.login==\"$APPROVER\") | select(.body | test(\"(^|\\\\n)/approve(\\\\n|$)\";\"i\"))] | length")
             else
-              approved=$(gh api "repos/${{ github.repository }}/issues/${ISSUE_NUMBER}/comments" --paginate \
-                --jq "[.[] | select((.body // \"\") | test(\"(^|\\\\n)/approve(\\\\n|$)\";\"i\"))] | length" 2>/dev/null || echo 0)
+              APPROVED=$(gh api repos/${{ github.repository }}/issues/$ISSUE/comments --paginate \
+                --jq "[.[] | select(.body | test(\"(^|\\\\n)/approve(\\\\n|$)\";\"i\"))] | length")
             fi
 
-            if [[ "${approved}" != "0" ]]; then
-              echo "✅ Approved via /approve comment."
+            if [[ "$APPROVED" -gt 0 ]]; then
+              echo "✅ Approval received"
               break
             fi
 
-            echo "Still waiting... (sleep 30s)"
             sleep 30
           done
 
@@ -300,21 +281,20 @@ jobs:
             echo "- **Approver input:** \`${{ inputs.approver }}\`"
             echo "- **Timeout:** \`${{ inputs.approval_timeout_minutes }} minutes\`"
             echo ""
-            echo "✅ Gate completed (approved) OR ❌ failed (timeout)."
+            echo "✅ Gate passed if this job succeeded."
           } >> "$GITHUB_STEP_SUMMARY"
 
 
   migration:
-    name: Stage 2 - Migration
+    name: Stage 2 - Migration (after approval)
     needs: [pre_migration_validation, approval_gate]
-    if: ${{ always() && inputs.run_migration == 'true'
+    if: ${{ always()
+            && inputs.run_migration == 'true'
             && (needs.pre_migration_validation.result == 'success' || needs.pre_migration_validation.result == 'skipped')
             && (needs.approval_gate.result == 'success' || needs.approval_gate.result == 'skipped') }}
     runs-on: ${{ inputs.runner == 'ubuntu-latest' && 'ubuntu-latest' || fromJson(inputs.runner) }}
 
-    # Optional extra safety:
-    # If you configure Settings → Environments → "migration" → Required reviewers,
-    # GitHub will pause this job until approved. [1](https://docs.github.com/en/migrations/using-github-enterprise-importer/migrating-between-github-products/migrating-repositories-from-github-enterprise-server-to-github-enterprise-cloud)
+    # Optional native pause if you configure environment reviewers [4](https://docs.github.com/en/migrations/using-github-enterprise-importer/migrating-between-github-products/migrating-repositories-from-github-enterprise-server-to-github-enterprise-cloud)
     environment: migration
 
     steps:
@@ -327,9 +307,10 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y jq gh
+          sudo apt-get install -y jq gh python3
           gh --version
           jq --version
+          python3 --version
 
       - name: Install / update GitHub Enterprise Importer (GEI) extension
         shell: bash
@@ -353,45 +334,72 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Migration runner supports --max-concurrent, --csv, --output [3](https://www.youtube.com/watch?v=LS2lq1vMFws)
+          # runner supports --max-concurrent, --csv, --output [2](https://www.youtube.com/watch?v=LS2lq1vMFws)
           ./scripts/2_migration.sh \
             --max-concurrent "${{ inputs.max_concurrent }}" \
             --csv "scripts/repos.csv" \
             --output repo_migration_output.csv \
             | tee migration.log
 
-      - name: Publish stage summary (migration)
+      - name: Publish migration summary (including migrated links)
         if: always()
         shell: bash
         run: |
-          {
-            echo "## 🚀 Stage 2: Migration"
-            echo ""
-            echo "**Concurrency:** \`${{ inputs.max_concurrent }}\`"
-            echo "**GitHub-owned storage:** \`${{ inputs.use_github_storage }}\`"
-            echo "**Target API URL:** \`${{ inputs.target_api_url }}\`"
-            echo ""
-            if [[ -f repo_migration_output.csv ]]; then
-              echo "### Result counts (from repo_migration_output.csv)"
-              success=$(awk -F',' 'NR>1 && $6 ~ /Success/ {c++} END{print c+0}' repo_migration_output.csv)
-              failure=$(awk -F',' 'NR>1 && $6 ~ /Failure/ {c++} END{print c+0}' repo_migration_output.csv)
-              echo "- ✅ Success: **$success**"
-              echo "- ❌ Failure: **$failure**"
-              echo ""
-              echo "### Outputs"
-              echo "- \`repo_migration_output.csv\`"
-              echo "- \`migration-*.txt\` (per repo logs)"
-            else
-              echo "> [!CAUTION]"
-              echo "> \`repo_migration_output.csv\` not found. Check \`migration.log\`."
-            fi
-            echo ""
-            echo "### Approval"
-            echo "- Approval issue: ${{ needs.approval_gate.outputs.approval_issue_url }}"
-            echo ""
-            echo "### Artifacts"
-            echo "- \`migration.log\`, \`repo_migration_output.csv\`, \`migration-*.txt\`"
-          } >> "$GITHUB_STEP_SUMMARY"
+          python3 - <<'PY'
+          import csv, os, sys
+          from pathlib import Path
+
+          out = Path("repo_migration_output.csv")
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+          def w(s=""):
+            with open(summary_path, "a", encoding="utf-8") as f:
+              f.write(s + "\n")
+
+          w("## 🚀 Stage 2: Migration")
+          w("")
+          w(f"**Concurrency:** `{os.getenv('MAX_CONCURRENCY','${{ inputs.max_concurrent }}')}`")
+          w(f"**GitHub-owned storage:** `{os.getenv('USE_GITHUB_STORAGE','${{ inputs.use_github_storage }}')}`")
+          w(f"**Target API URL:** `{os.getenv('TARGET_API_URL','${{ inputs.target_api_url }}')}`")
+          w("")
+          w(f"**Approval issue:** ${{ needs.approval_gate.outputs.approval_issue_url }}")
+          w("")
+
+          if not out.exists():
+            w("> [!CAUTION]")
+            w("> `repo_migration_output.csv` not found. Check `migration.log`.")
+            sys.exit(0)
+
+          rows = []
+          with out.open(newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for r in reader:
+              rows.append(r)
+
+          success = sum(1 for r in rows if (r.get("Migration_Status","") or "").lower().startswith("success"))
+          failure = sum(1 for r in rows if (r.get("Migration_Status","") or "").lower().startswith("failure"))
+          w("### Result counts")
+          w(f"- ✅ Success: **{success}**")
+          w(f"- ❌ Failure: **{failure}**")
+          w("")
+          w("### Repository results")
+          w("| Source (GHES) | Status | Target (GitHub) |")
+          w("|---|---|---|")
+
+          for r in rows:
+            src = f"{r.get('ghes_org','')}/{r.get('ghes_repo','')}"
+            status = r.get("Migration_Status","")
+            tgt_org = r.get("github_org","")
+            tgt_repo = r.get("github_repo","")
+            if (status or "").lower().startswith("success") and tgt_org and tgt_repo:
+              link = f"https://github.com/{tgt_org}/{tgt_repo}"
+              w(f"| {src} | ✅ Success | {link} |")
+            else:
+              w(f"| {src} | ❌ {status} | - |")
+
+          w("")
+          w("### Artifacts")
+          w("- `repo_migration_output.csv`, `migration.log`, `migration-*.txt`")
+          PY
 
       - name: Upload migration artifacts
         if: always()
@@ -408,7 +416,8 @@ jobs:
   post_migration_validation:
     name: Stage 3 - Post-migration validation
     needs: [pre_migration_validation, migration]
-    if: ${{ always() && inputs.run_post_validation == 'true'
+    if: ${{ always()
+            && inputs.run_post_validation == 'true'
             && (needs.pre_migration_validation.result == 'success' || needs.pre_migration_validation.result == 'skipped')
             && (needs.migration.result == 'success' || needs.migration.result == 'skipped') }}
     runs-on: ${{ inputs.runner == 'ubuntu-latest' && 'ubuntu-latest' || fromJson(inputs.runner) }}
@@ -432,7 +441,7 @@ jobs:
         shell: bash
         run: chmod +x scripts/*.sh
 
-      # Post-validation script expects scripts/repos.csv (hardcoded) [4](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments)
+      # script expects scripts/repos.csv (hardcoded) [3](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments)
       - name: Prepare repos.csv for scripts
         shell: bash
         run: |
@@ -446,14 +455,14 @@ jobs:
           set -euo pipefail
           ./scripts/3_post_migration_validation.sh | tee post_validation.log
 
-      - name: Publish stage summary (post-validation)
+      - name: Publish post-validation summary
         if: always()
         shell: bash
         run: |
           {
-            echo "## 🔎 Stage 3: Post-migration validation"
+            echo "## 🔎 Stage 3: Post‑migration validation"
             echo ""
-            echo "### Quick indicators"
+            echo "### Indicators (from script output/log)"
             echo "- ❌ ERROR lines: **$(grep -c \"ERROR\" post_validation.log || true)**"
             echo "- ⚠️ ❌ Not Matching lines: **$(grep -c \"❌ Not Matching\" post_validation.log || true)**"
             echo ""
