@@ -1,5 +1,0 @@
-ghes_org,ghes_repo,repo_url,repo_size_MB,github_org,github_repo,gh_repo_visibility
-ghes-factory-demo,solar-system,https://antgrutta-07mubd.ghe-test.com/ghes-factory-demo/solar-system,2.02,test-19-yash,solar-system,private
-ghes-factory-demo,calotracker,https://antgrutta-07mubd.ghe-test.com/ghes-factory-demo/calotracker,2.96,test-19-yash,calotracker,private
-ghes-factory-demo,mern_app,https://antgrutta-07mubd.ghe-test.com/ghes-factory-demo/mern_app,0.25,test-19-yash,mern_app,private
-ghes-factory-demo,my_app_2,https://antgrutta-07mubd.ghe-test.com/ghes-factory-demo/my_app_2,0,test-19-yash,my_app_2,private
