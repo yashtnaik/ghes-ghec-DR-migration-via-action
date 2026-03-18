@@ -1,16 +1,38 @@
 # GHES ➜ GitHub.com Migration with GitHub Actions (GEI) — Staged Workflow
 
-This repository provides a **GitHub Actions workflow** to migrate repositories from **GitHub Enterprise Server (GHES)** to **GitHub Enterprise Cloud / GitHub.com** using the **GitHub Enterprise Importer (GEI)** `gh gei` CLI extension.
+This repository provides workflows and scripts to support the migration of repositories and configurations from **GitHub Enterprise Server (GHES)** to **GitHub Enterprise Cloud (GHEC)** using **GitHub Actions**. It integrates repository migrations with both **variables** and **environment synchronization** to ensure complete and consistent setup on the target system.
 
 It is modeled after a *bbs2gh-actions* style workflow and implements a **staged migration pipeline** with an explicit approval gate:
 
 - ✅ **Stage 1 – Pre‑migration validation** (open PRs, queued/running workflows, open issues)
-- 🛂 **Stage 2 – Manual approval gate** (issue‑based approval before migration)
-- 🚀 **Stage 3 – Migration execution** (parallel migrations, max 5 at a time)
-- 🔎 **Stage 4 – Post‑migration validation** (branch count, commit count, latest SHA verification)
+- 🛂 **Stage 1.1 – Manual approval gate** (issue‑based approval before migration)
+- 🚀 **Stage 2 – Migration execution** (parallel migrations, max 5 at a time)
+- 🔎 **Stage 3 – Post‑migration validation** (branch count, commit count, latest SHA verification)
+- 🛂 **Stage 3.1 – Manual approval gate** (issue‑based approval before variable & Environment migration)
+- 🚀 **Stage 4 - Vars Migration (GHES → GHEC)
 
 > **Important**: If your GHES instance is reachable only from your corporate network, run this workflow on a **self‑hosted runner** with network access to GHES.
 
+---
+## Overview
+
+### Stage 1: Pre‑Migration Validation
+Checks include:
+- Open Pull Requests
+- Queued/Running Workflows
+- Open Issues
+
+### Stage 2: Manual Approval Gate
+Requires an approval step before proceeding to migration.
+
+### Stage 3: Migration Execution
+- Parallel migrations (up to 5 at a time).
+
+### Stage 4: Post‑Migration Validation
+Validates:
+- Branch Count
+- Commit Count
+- Latest SHA
 ---
 
 ## Repository layout
@@ -32,7 +54,27 @@ scripts/
 
   inventory-report.sh              # Generates repos.csv (inventory)
   inventory-report.ps1             # Generates repos.csv (inventory)
+
+  ghes-ghec-full-sync.ps1        # GHEC sync script for org/repo/env variables
+  ghes-ghec-full-sync.sh         # GHEC sync script for org/repo/env variables (Bash)
 ```
+
+## Key Features
+
+### Migration
+- Migrates repositories from GHES to GHEC with GitHub Actions.
+- Moves **Actions variables** at both the org and repo levels.
+- Syncs **environment variables** and **protection rules** (e.g., required reviewers, wait timers).
+
+### What It Does Not Migrate
+- Environment secrets (requires a separate flow).
+- Deployment branch/tag restrictions.
+- Some custom protection rules.
+
+### Note:
+- login gh first using gh auth login --hostname <ghes-url>  (otherwise script wont run(only if script run outside | in pipeline this is taken care automatically)
+- stage 4(migrate vars & env) requires you to manually add the reviewer column and we should add the reviewer handle in the column, but only if you need to migrate protection rules if not needed then can skip adding the column.
+- Environment protection rule migration is only supported for Enterprise accounts (both private and public repositories), and for public repositories in regular accounts.
 
 ---
 
@@ -49,20 +91,6 @@ Create these repository secrets in **Settings → Secrets and variables → Acti
 
 ---
 
-## repos.csv format
-
-The scripts expect the following header names (order can vary; extra columns are allowed):
-
-```csv
-ghes_org,ghes_repo,repo_url,repo_size_MB,github_org,github_repo,gh_repo_visibility
-```
-
-Required columns for migration:
-- `ghes_org`, `ghes_repo` (source)
-- `github_org`, `github_repo`, `gh_repo_visibility` (target)
-
----
-
 ## Inventory (generate repos.csv)
 
 This repository includes:
@@ -70,6 +98,21 @@ This repository includes:
 - `inventory-report.ps1`
 
 Use these scripts to generate a `repos.csv` inventory file, then commit it before running the migration workflow.
+
+---
+
+## repos.csv format
+
+The scripts expect the following header names (order can vary; extra columns are allowed):
+
+```csv
+ghes_org,ghes_repo,repo_url,repo_size_MB,github_org,github_repo,gh_repo_visibility,reviewer
+```
+
+Required columns for migration:
+- `ghes_org`, `ghes_repo` (source)
+- `github_org`, `github_repo`, `gh_repo_visibility` (target)
+- `reviewer` (for protection rule migration in ENV)
 
 ---
 
@@ -86,10 +129,11 @@ Use these scripts to generate a `repos.csv` inventory file, then commit it befor
    - `require_approval`
    - `run_migration`
    - `run_post_validation`
+   - `migrate org/repo/env`
 
 ### Manual approval gate
 
-If `require_approval=true`, the workflow creates an approval issue and **waits** until the approver approves before starting migration.
+If `require_approval=true`, the workflow creates an approval issue and **waits** until the approver approves before starting migration of repo and vars/env.
 
 ---
 
@@ -113,6 +157,15 @@ Each stage publishes a **Job Summary** in the Actions run UI:
   - SHA match
 - Collapsible section with per‑branch mismatch details
 
+### Vars Migration (GHES → GHEC) summary
+- Execution status
+- Repositories processed
+- Org Variables
+- Repo Variables
+- Environment Rules
+- Environment Variables
+- Failure point (if any)
+
 ---
 
 ## Artifacts
@@ -124,7 +177,7 @@ Each run uploads artifacts for traceability:
 - `migration-*.txt`
 - `post_validation.log`
 - `validation-log-*.txt`, `validation-*.json`
-
+- `vars_migration.log`
 ---
 
 ## Troubleshooting
@@ -134,6 +187,11 @@ Each run uploads artifacts for traceability:
 - **401 / 403 errors**: verify PAT scopes and SSO authorization.
 - **CSV not found**: workflow copies `csv_path` to `scripts/repos.csv` for pre/post scripts.
 - **Post‑validation mismatches**: review repo‑wise summary and validation logs.
+
+### Common Issues:
+- **Approval Gate**: Ensure `require_approval=true` and a valid approver.
+- **Access Errors**: Verify PATs and scope permissions.
+- **Sync Issues**: Double-check required reviewers and their access levels.
 
 ---
 
