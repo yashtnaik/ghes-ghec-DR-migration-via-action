@@ -39,7 +39,8 @@ Validates:
 
 ```
 .github/workflows/
-  ghes2gh-staged.yml              # Main staged workflow (pre → approval → migrate → post)
+  ghes2gh.yml.yml              # Main staged workflow (pre → approval → migrate → post)
+  ghes-ghec-with-vars.yml              # Main staged workflow (pre → approval → migrate → post → approval → Vars & Env migration)
 
 repos.csv                          # Migration input list (can be generated via inventory scripts)
 
