@@ -56,8 +56,8 @@ scripts/
   inventory-report.sh              # Generates repos.csv (inventory)
   inventory-report.ps1             # Generates repos.csv (inventory)
 
-  ghes-ghec-var_mig.ps1        # GHEC sync script for org/repo/env variables
-  ghes-ghec-var_mig.sh         # GHEC sync script for org/repo/env variables (Bash)
+  4_ghes-ghec-var_mig.ps1        # GHEC sync script for org/repo/env variables
+  4_ghes-ghec-var_mig.sh         # GHEC sync script for org/repo/env variables (Bash)
 ```
 
 ## Key Features
