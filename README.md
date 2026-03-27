@@ -1,8 +1,6 @@
-# GHES ➜ GitHub.com Migration with GitHub Actions (GEI) — Staged Workflow
+# GHES ➜ GitHub.com Migration with GitHub Actions (GEI) — Staged Workflow (Supports Data Residency)
 
-This repository provides workflows and scripts to support the migration of repositories and configurations from **GitHub Enterprise Server (GHES)** to **GitHub Enterprise Cloud (GHEC)** using **GitHub Actions**. It integrates repository migrations with both **variables** and **environment synchronization** to ensure complete and consistent setup on the target system.
-
-It is modeled after a *bbs2gh-actions* style workflow and implements a **staged migration pipeline** with an explicit approval gate:
+This repository provides workflows and scripts to support the migration of repositories and configurations from **GitHub Enterprise Server (GHES)** to **GitHub Enterprise Cloud (GHEC) (Regular and Data Residency)** using **GitHub Actions**. It integrates repository migrations with both **variables** and **environment synchronization** to ensure complete and consistent setup on the target system.
 
 - ✅ **Stage 1 – Pre‑migration validation** (open PRs, queued/running workflows, open issues)
 - 🛂 **Stage 1.1 – Manual approval gate** (issue‑based approval before migration)
@@ -39,7 +37,6 @@ Validates:
 
 ```
 .github/workflows/
-  ghes2gh.yml.yml              # Main staged workflow (pre → approval → migrate → post)
   ghes-ghec-with-vars.yml              # Main staged workflow (pre → approval → migrate → post → approval → Vars & Env migration)
 
 repos.csv                          # Migration input list (can be generated via inventory scripts)
@@ -85,7 +82,7 @@ Create these repository secrets in **Settings → Secrets and variables → Acti
 
 | Secret | Used for |
 |---|---|
-| `GH_TOKEN` | Auth for `gh` CLI in the workflow (recommended: same value as `GH_PAT`) |
+| `GH_TARGET_HOST` | Add this as a secret only for Data Residency–enabled GHEC instances (e.g., `maayon-enterprise.ghe.com`) |
 | `GH_PAT` | Target GitHub token (destination org; needs migrator/owner access) |
 | `GH_SOURCE_PAT` | Source GHES token |
 | `GHES_API_URL` | GHES REST API base URL, e.g. `https://ghe.example.com/api/v3` |
