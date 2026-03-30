@@ -105,7 +105,8 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y jq gh python3
+          sudo apt-get install -y jq gh 
+          # python3
           gh --version
           jq --version
           python3 --version
