@@ -114,6 +114,96 @@ Required columns for migration:
 
 ---
 
+# 📦 External Storage Auto-Detection
+
+The migration scripts and workflows included in this repository support the use of **external object storage** for migration archives.
+
+If any of the below environment variables are detected at runtime, the migration commands will **automatically switch to using external storage** instead of GitHub-managed storage.
+
+In such cases, the scripts will internally:
+
+- ✅ Configure the appropriate storage provider  
+- ✅ Pass the required parameters to the `gh bbs2gh` / GEI migration command  
+- ✅ Avoid using the `--use-github-storage` flag  
+
+> ⚠️ **Important:**  
+> If these variables are present in the environment, you **must NOT manually pass** `--use-github-storage` in any custom script overrides.  
+> External storage will automatically take precedence.
+
+---
+
+## ☁️ AWS S3 Bucket (Auto-Detection)
+
+If the following AWS environment variables are identified, the migration workflow will automatically use the specified **S3 bucket** for storing migration archives.
+
+### Bash (Linux / GitHub-Hosted Runners)
+```bash
+export AWS_ACCESS_KEY_ID=""
+export AWS_SECRET_ACCESS_KEY=""
+export AWS_REGION=""
+export AWS_BUCKET_NAME=""
+```
+
+### PowerShell (Self-Hosted Windows / Linux Runners)
+```powershell
+$env:AWS_ACCESS_KEY_ID=""
+$env:AWS_SECRET_ACCESS_KEY=""
+$env:AWS_REGION=""
+$env:AWS_BUCKET_NAME=""
+```
+
+Once these variables are set:
+
+- External AWS S3 storage will be used automatically  
+- `--use-github-storage` will **not** be applied  
+- Migration archives will be stored in the configured S3 bucket  
+
+---
+
+## ☁️ Azure Blob Storage (Auto-Detection)
+
+If the following Azure environment variable is identified, the migration workflow will automatically use the configured **Azure Blob Storage container** for migration archives.
+
+### Bash (Linux / GitHub-Hosted Runners)
+```bash
+export AZURE_STORAGE_CONNECTION_STRING=""
+```
+
+### PowerShell (Self-Hosted Windows / Linux Runners)
+```powershell
+$env:AZURE_STORAGE_CONNECTION_STRING=""
+```
+
+Once this variable is set:
+
+- External Azure Blob storage will be used automatically  
+- `--use-github-storage` will **not** be applied  
+- Migration archives will be stored in the configured Azure storage account
+
+---
+
+## 🧠 Runtime Behavior Summary
+
+| Condition | Storage Used |
+|-----------|-------------|
+| No external storage variables detected | GitHub-managed storage (`--use-github-storage`) |
+| AWS variables detected | AWS S3 bucket |
+| Azure connection string detected | Azure Blob |
+| Multiple providers detected | Provider selection handled automatically by script precedence |
+
+---
+
+## ✅ Recommendation
+
+Ensure that:
+
+- Environment variables are securely injected via:
+  - GitHub Actions **Secrets**
+  - Self-Hosted Runner **Environment Configuration**
+  - Runtime Secret Management Tools (Vault, etc.)
+- These variables are **exported before invoking any migration stage**
+
+---
 ## Running the workflow
 
 1. Generate or update `repos.csv` and commit it to the repository.
