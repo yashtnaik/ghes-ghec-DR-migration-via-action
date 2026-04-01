@@ -1,4 +1,4 @@
-name: ghes-to-github-migration (with vars)
+name: ghes-to-github-migration (issue based approval)
 on:
   workflow_dispatch:
     inputs:
