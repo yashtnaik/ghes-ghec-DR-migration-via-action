@@ -1,4 +1,5 @@
 name: ghes-to-github-migration (with vars)
+
 on:
   workflow_dispatch:
     inputs:
@@ -23,21 +24,9 @@ on:
         type: choice
         options: ["1","2","3","4","5"]
 
-      approver:
-        description: "Approver GitHub handle(s) for manual approval (comma-separated). Example: naik123"
-        required: true
-        type: string
-
       # Stage toggles
       run_pre_validation:
         description: "Run Stage 1: pre-migration validation"
-        required: true
-        default: "true"
-        type: choice
-        options: ["true","false"]
-
-      require_approval:
-        description: "Require approval between Stage 1 and Stage 2"
         required: true
         default: "true"
         type: choice
@@ -57,14 +46,6 @@ on:
         type: choice
         options: ["true","false"]
 
-      # ✅ Approval after post-validation (before vars migration)
-      require_vars_approval:
-        description: "Require approval between Stage 3 and Stage 4"
-        required: true
-        default: "true"
-        type: choice
-        options: ["true","false"]
-        
       # ✅ Stage 4 toggle (vars migration)
       run_vars_migration:
         description: "Run Stage 4: migrate org/repo/env variables (GHES → GHEC)"
@@ -73,11 +54,8 @@ on:
         type: choice
         options: ["true","false"]
 
-
-
 permissions:
   contents: read
-  issues: write
   actions: write
 
 env:
@@ -139,8 +117,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ./scripts/1_migration-readiness.sh |
-          tee precheck.log
+          ./scripts/1_migration-readiness.sh | tee precheck.log
 
       - name: Publish pre-validation consolidated summary (same lines as script)
         if: always()
@@ -154,13 +131,6 @@ jobs:
             echo "### Consolidated summary (from script output)"
             grep -E "Total Repositories Processed:|Repositories with Active Pull Requests:|Repositories with Workflows \(Running or Queued\):|Repositories with Open Issues:" precheck.log |
               sed 's/^/- /' || true
-            echo ""
-            echo "### Next step"
-            if [[ "${{ inputs.require_approval }}" == "true" && "${{ inputs.run_migration }}" == "true" ]]; then
-              echo "- ⏸️ Manual approval gate enabled. Approval issue will be created and the workflow will wait."
-            else
-              echo "- ▶️ Approval gate disabled OR migration stage not selected."
-            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish pre-validation repo-wise summary (table) ✅ fixed
@@ -255,63 +225,18 @@ jobs:
           if-no-files-found: warn
 
   # ------------------------------------------------------------
-  # Job 2: Approval gate (same logic as your BBS workflow)
-  # ------------------------------------------------------------
-  approval-gate:
-    name: ✅ Manual Approval to Proceed
-    runs-on: ubuntu-latest
-    needs: [pre-migration-validation]
-    timeout-minutes: 1440
-    if: ${{ always()
-      && inputs.run_migration == 'true'
-      && inputs.require_approval == 'true'
-      && (needs.pre-migration-validation.result == 'success'
-          || needs.pre-migration-validation.result == 'skipped') }}
-    steps:
-      - name: Context
-        run: |
-          echo "Approval is required to proceed to migration."
-          echo "Approver(s): ${{ inputs.approver }}"
-
-      - name: Wait for manual approval
-        uses: trstringer/manual-approval@v1
-        with:
-          secret: ${{ github.token }}
-          approvers: ${{ inputs.approver }}
-          minimum-approvals: 1
-          issue-title: "Approve GHES → GitHub migration"
-          issue-body: |
-            Please review the **Pre-migration Validation Summary** in Stage 1.
-            Comment **approved** to proceed, or **deny** to stop.
-          exclude-workflow-initiator-as-approver: false
-          fail-on-denial: true
-          polling-interval-seconds: 30
-
-      - name: Publish approval summary
-        if: always()
-        shell: bash
-        run: |
-          {
-            echo "## 🛂 Manual Approval Gate"
-            echo ""
-            echo "- **Approver(s):** \`${{ inputs.approver }}\`"
-            echo "- If this job succeeded, approval was granted."
-          } >> "$GITHUB_STEP_SUMMARY"
-
-  # ------------------------------------------------------------
-  # Stage 2: Migration (script 2)
+  # Stage 2: Migration (script 2)  ✅ environment gate added
   # ------------------------------------------------------------
   migration:
     name: Stage 2 - Migration (GHES → GitHub)
+    environment: migration-approval
     runs-on: ${{ inputs.runner == 'ubuntu-latest' && 'ubuntu-latest' || fromJson(inputs.runner) }}
     timeout-minutes: 360
-    needs: [approval-gate, pre-migration-validation]
+    needs: [pre-migration-validation]
     if: ${{ always()
       && inputs.run_migration == 'true'
       && (needs.pre-migration-validation.result == 'success'
-          || needs.pre-migration-validation.result == 'skipped')
-      && (needs.approval-gate.result == 'success'
-          || needs.approval-gate.result == 'skipped') }}
+          || needs.pre-migration-validation.result == 'skipped') }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -367,23 +292,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-      
+
           mkdir -p octoshift-logs
-      
+
           # Capture ONLY the files you showed (octoshift logs created in execution dir)
           cp -v *.octoshift*.log octoshift-logs/ 2>/dev/null || true
-      
+
           # (Optional but useful) include your workflow logs too
           cp -v migration.log repo_migration_output.csv octoshift-logs/ 2>/dev/null || true
           cp -v migration-*.txt octoshift-logs/ 2>/dev/null || true
-      
+
           # Create tar.gz
           tar -czf octoshift-logs.tgz octoshift-logs
-      
+
           echo "## 📦 Octoshift logs captured" >> "$GITHUB_STEP_SUMMARY"
           echo "- Included: \`*.octoshift*.log\` (plus migration outputs if present)" >> "$GITHUB_STEP_SUMMARY"
           echo "- Artifact: \`octoshift-logs.tgz\`" >> "$GITHUB_STEP_SUMMARY"
-    
+
       - name: Publish migration summary (repo-wise + migrated links)
         if: always()
         shell: bash
@@ -498,8 +423,7 @@ jobs:
               echo "$GH_PAT" | gh auth login --hostname "$GH_TARGET_HOST" --with-token
           fi
           set -euo pipefail
-          ./scripts/3_post_migration_validation.sh |
-          tee post_validation.log
+          ./scripts/3_post_migration_validation.sh | tee post_validation.log
 
       - name: Publish post-validation repo-wise summary (branch/commit/SHA)
         if: always()
@@ -619,59 +543,18 @@ jobs:
           if-no-files-found: warn
 
   # ============================================================
-  # ✅ NEW: Stage 4 (Vars Migration) - runs ONLY after Stage 3 success
+  # ✅ Stage 4 (Vars Migration) - runs ONLY after Stage 3 success
+  # ✅ environment gate added
   # ============================================================
-
-  vars-approval-gate:
-    name: ✅ Manual Approval to Run Vars Migration (Stage 4)
-    runs-on: ubuntu-latest
-    needs: [post-migration-validation]
-    timeout-minutes: 1440
-    if: ${{ always()
-      && inputs.run_vars_migration == 'true'
-      && inputs.require_vars_approval == 'true'
-      && needs.post-migration-validation.result == 'success' }}
-    steps:
-      - name: Context
-        run: |
-          echo "Approval is required to proceed to vars migration (Stage 4)."
-          echo "Approver(s): ${{ inputs.approver }}"
-
-      - name: Wait for manual approval
-        uses: trstringer/manual-approval@v1
-        with:
-          secret: ${{ github.token }}
-          approvers: ${{ inputs.approver }}
-          minimum-approvals: 1
-          issue-title: "Approve GHES → GHEC Variables Migration (Stage 4)"
-          issue-body: |
-            Post-migration validation (Stage 3) completed successfully.
-            Comment **approved** to run variable migration, or **deny** to stop.
-          exclude-workflow-initiator-as-approver: false
-          fail-on-denial: true
-          polling-interval-seconds: 30
-
-      - name: Publish approval summary
-        if: always()
-        shell: bash
-        run: |
-          {
-            echo "## 🛂 Manual Approval Gate (Stage 4)"
-            echo ""
-            echo "- **Approver(s):** \`${{ inputs.approver }}\`"
-            echo "- If this job succeeded, vars migration was approved."
-          } >> "$GITHUB_STEP_SUMMARY"
-
   vars-migration:
     name: Stage 4 - Vars Migration (GHES → GHEC)
+    environment: migration-approval
     runs-on: ${{ inputs.runner == 'ubuntu-latest' && 'ubuntu-latest' || fromJson(inputs.runner) }}
     timeout-minutes: 180
-    needs: [vars-approval-gate, post-migration-validation]
+    needs: [post-migration-validation]
     if: ${{ always()
       && inputs.run_vars_migration == 'true'
-      && needs.post-migration-validation.result == 'success'
-      && (needs.vars-approval-gate.result == 'success'
-          || needs.vars-approval-gate.result == 'skipped') }}
+      && needs.post-migration-validation.result == 'success' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -713,16 +596,15 @@ jobs:
 
           # Optional: show status (no token printed)
           gh auth status --hostname "${SOURCE_HOST}" || true
-            
+
       - name: Run vars migration script
         shell: bash
         run: |
           GH_TARGET_HOST="$GH_TARGET_HOST"
           set -euo pipefail
-          # Your script defaults CSV_FILE=repos.csv, so we explicitly point it to scripts/repos.csv
           export CSV_FILE="scripts/repos.csv"
           ./scripts/4_ghes-ghec-var_mig.sh 2>&1 | tee vars_migration.log
-      
+
       - name: Publish Stage 4 vars migration summary
         if: always()
         shell: bash
