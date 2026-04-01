@@ -91,11 +91,11 @@ Create these repository secrets in **Settings → Secrets and variables → Acti
 | `GHES_API_URL` | GHES REST API base URL, e.g. `https://ghe.example.com/api/v3` |
 
 ---
-##Approval
-`Important`: Create the migration-approval Environment: The migration job is gated by a required reviewer. Go to Settings → Environments → New environment, name it exactly: migration-approval
+## Approval
+`Important`
 
+- Create the migration-approval Environment: The migration job is gated by a required reviewer. Go to Settings → Environments → New environment, name it exactly: migration-approval
 - Then add one or more Required reviewers - the migration job will pause and wait for approval before running.
-
 - If a customer wants every approval stage to be logged and summarized—including who approved the migration, when it was approved, and any comments if the migration approval was postponed—then issue-based approval is more suitable.
 ---
 
