@@ -37,7 +37,10 @@ Validates:
 
 ```
 .github/workflows/
-  ghes-ghec-with-vars.yml              # Main staged workflow (pre → approval → migrate → post → approval → Vars & Env migration)
+  ghes-ghec-with-vars-issue-based-approval.yml              # Main staged workflow, this workflow uses issue based approval (pre → approval → migrate → post → approval → Vars & Env migration)
+  ghe-sghec-with-vars-approver-gate.yml   # same workflow, this perticular one will create a UI based approval (pre → migrate → post → Vars & Env migration)
+
+Use issue based approval worfklow if you want to log the approvals stage as well for future easy referece. otherwsie approver gate can be used.
 
 repos.csv                          # Migration input list (can be generated via inventory scripts)
 
@@ -87,6 +90,10 @@ Create these repository secrets in **Settings → Secrets and variables → Acti
 | `GH_SOURCE_PAT` | Source GHES token |
 | `GHES_API_URL` | GHES REST API base URL, e.g. `https://ghe.example.com/api/v3` |
 
+---
+`Important`: Create the migration-approval Environment: The migration job is gated by a required reviewer. Go to Settings → Environments → New environment, name it exactly: migration-approval
+
+`Then add one or more Required reviewers - the migration job will pause and wait for approval before running.`
 ---
 
 ## Inventory (generate repos.csv)
