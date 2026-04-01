@@ -353,7 +353,7 @@ jobs:
             gh_org = (r.get("github_org") or "").strip()
             gh_repo = (r.get("github_repo") or "").strip()
             if status.lower().startswith("success") and gh_org and gh_repo:
-              link = f"https://$GH_TARGET_HOST/{gh_org}/{gh_repo}"
+              link = f"https://github.com/{gh_org}/{gh_repo}"
               w(f"| `{src}` | ✅ Success | {link} |")
             else:
               w(f"| `{src}` | ❌ {status or 'Unknown'} | - |")
