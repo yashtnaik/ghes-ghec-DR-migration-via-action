@@ -1,4 +1,4 @@
-name: ghes-to-github-migration (with vars)
+name: ghe-sghec-with-vars-approver-gate
 
 on:
   workflow_dispatch:
